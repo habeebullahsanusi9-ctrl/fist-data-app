@@ -1,4 +1,96 @@
 'use client';
-import { useEffect,useState } from 'react'; import { useRouter } from 'next/navigation';
-type Plan={id:string;network:string;plan_name:string;data_amount:string;price:number;validity:string};
-export default function BuyData(){const router=useRouter();const [plans,setPlans]=useState<Plan[]>([]);const [phone,setPhone]=useState('');const [selected,setSelected]=useState('');const [message,setMessage]=useState('');const [error,setError]=useState('');useEffect(()=>{fetch('/api/plans').then(r=>r.json()).then(d=>setPlans(d.plans||[])).catch(()=>setError('Could not load plans.'))},[]);async function buy(){setError('');setMessage('');if(!selected||!phone){setError('Select a plan and enter a phone number.');return}const r=await fetch('/api/purchase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({planId:selected,phoneNumber:phone})});const d=await r.json();if(r.status===401){router.push('/login');return}if(!r.ok){setError(d.error||'Purchase failed.');return}setMessage(`${d.message} Reference: ${d.reference}`);}return <main className="wrap"><nav className="nav"><div className="brand">FIST <span>DATA</span></div><div className="navlinks"><a href="/dashboard">Dashboard</a><a href="/wallet">Wallet</a></div></nav><h1>Buy Data</h1><p className="muted">Choose a plan and the recipient phone number.</p><label className="field">Recipient phone number<input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="08012345678" /></label><div className="grid">{plans.map(p=><button key={p.id} className={`card plan ${selected===p.id?'selected':''}`} onClick={()=>setSelected(p.id)}><div className="network">{p.network}</div><div className="price">{p.data_amount}</div><p>{p.validity}</p><strong>₦{Number(p.price).toLocaleString()}</strong></button>)}</div>{error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}<button className="btn primary" onClick={buy}>Continue with selected plan</button><div className="notice">Demo fulfilment protection: money is only deducted from the wallet after a balance check, but telecom delivery is not connected yet.</div></main>}
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+
+type Plan = {
+  id: string;
+  network: string;
+  plan_name: string;
+  data_amount: string;
+  price: number;
+  validity: string;
+};
+
+export default function BuyData() {
+  const router = useRouter();
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [phone, setPhone] = useState('');
+  const [selected, setSelected] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/plans')
+      .then((r) => r.json())
+      .then((d) => setPlans(d.plans || []))
+      .catch(() => setError('Could not load plans.'));
+  }, []);
+
+  async function buy() {
+    setError('');
+    setMessage('');
+    if (!selected || !phone) {
+      setError('Select a plan and enter a phone number.');
+      return;
+    }
+    setLoading(true);
+    const r = await fetch('/api/purchase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planId: selected, phoneNumber: phone }),
+    });
+    const d = await r.json();
+    setLoading(false);
+    if (r.status === 401) {
+      router.push('/login');
+      return;
+    }
+    if (!r.ok) {
+      setError(d.error || 'Purchase failed.');
+      return;
+    }
+    setMessage(`${d.message} Reference: ${d.reference}`);
+  }
+
+  return (
+    <main className="wrap">
+      <nav className="nav">
+        <div className="brand">FIST <span>DATA</span></div>
+        <div className="navlinks">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/wallet">Wallet</a>
+        </div>
+      </nav>
+      <h1>Buy Data</h1>
+      <p className="muted">Choose a plan and the recipient phone number.</p>
+      <label className="field">
+        Recipient phone number
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08012345678" />
+      </label>
+      <div className="grid">
+        {plans.map((p) => (
+          <button
+            key={p.id}
+            className={`card plan ${selected === p.id ? 'selected' : ''}`}
+            onClick={() => setSelected(p.id)}
+          >
+            <div className="network">{p.network}</div>
+            <div className="price">{p.data_amount}</div>
+            <p>{p.validity}</p>
+            <strong>₦{Number(p.price).toLocaleString()}</strong>
+          </button>
+        ))}
+      </div>
+      {error && <div className="error">{error}</div>}
+      {message && <div className="notice">{message}</div>}
+      <button className="btn primary" onClick={buy} disabled={loading}>
+        {loading ? 'Processing...' : 'Continue with selected plan'}
+      </button>
+      <div className="notice">
+        Your wallet is debited securely. Data delivery status updates to successful only after
+        confirmation from the telecom provider.
+      </div>
+    </main>
+  );
+}

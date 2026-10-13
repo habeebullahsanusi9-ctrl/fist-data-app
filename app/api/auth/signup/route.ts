@@ -10,7 +10,9 @@ export async function POST(request: Request) {
     const email = String(body.email ?? '').trim();
     const phone = String(body.phone ?? '').trim();
     const password = String(body.password ?? '');
-    if (!fullName || !email || !phone || password.length < 6) return NextResponse.json({ error: 'Enter all fields. Password must be at least 6 characters.' }, { status: 400 });
+    if (!fullName || !email || !phone || password.length < 6)
+      return NextResponse.json({ error: 'Enter all fields. Password must be at least 6 characters.' }, { status: 400 });
+
     const user = await createUser(fullName, email, phone, password);
     await setSession(user.id);
     return NextResponse.json({ user });

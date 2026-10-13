@@ -1,7 +1,8 @@
-import { neon } from '@neondatabase/serverless';
+import { supabaseAdmin } from './supabaseAdmin';
 
-export function getSql() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error('DATABASE_URL is not configured. Connect Neon to this Vercel project.');
-  return neon(url);
-}
+/**
+ * Database access layer for FIST DATA.
+ * All queries use the service role client (bypasses RLS).
+ * Authorization is enforced in the API route handlers.
+ */
+export const db = supabaseAdmin();

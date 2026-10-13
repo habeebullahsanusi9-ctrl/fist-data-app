@@ -1,6 +1,15 @@
 import { cookies } from 'next/headers';
 import crypto from 'node:crypto';
-import { getSql } from './db';
+import { db } from './db';
+
+export type SafeUser = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  role: 'user' | 'admin';
+  status: 'active' | 'suspended';
+};
 
 const COOKIE = 'fist_session';
 
@@ -22,44 +31,80 @@ function newToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-export async function createUser(fullName: string, email: string, phone: string, password: string) {
+export async function createUser(fullName: string, email: string, phone: string, password: string): Promise<SafeUser> {
   const passwordHash = hashPassword(password);
-  const [user] = await getSql() `
-    INSERT INTO users (full_name, email, phone, password_hash)
-    VALUES (${fullName}, ${email.toLowerCase()}, ${phone}, ${passwordHash})
-    RETURNING id, full_name, email, phone, role, status
-  `;
-  await getSql() `INSERT INTO wallets (user_id, balance) VALUES (${user.id}, 0) ON CONFLICT (user_id) DO NOTHING`;
+
+  const { data: user, error } = await db
+    .from('users')
+    .insert({ full_name: fullName, email: email.toLowerCase(), phone, password_hash: passwordHash })
+    .select('id, full_name, email, phone, role, status')
+    .single();
+
+  if (error) throw error;
+
+  await db.from('wallets').insert({ user_id: user.id, balance: 0 });
+
   return user;
 }
 
-export async function loginUser(email: string, password: string) {
-  const [user] = await getSql() `SELECT * FROM users WHERE email = ${email.toLowerCase()} LIMIT 1`;
+export async function loginUser(email: string, password: string): Promise<SafeUser | null> {
+  const { data: user } = await db
+    .from('users')
+    .select('id, full_name, email, phone, role, status, password_hash')
+    .eq('email', email.toLowerCase())
+    .maybeSingle();
+
   if (!user || !verifyPassword(password, user.password_hash) || user.status !== 'active') return null;
-  return user;
+
+  const { password_hash, ...safe } = user;
+  return safe as SafeUser;
 }
 
 export async function setSession(userId: string) {
   const token = newToken();
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30 });
-  // The session token is stored as a hash so a database leak does not expose active cookies.
+  cookieStore.set(COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  });
+
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  await getSql() `CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL)`;
-  await getSql() `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${tokenHash}, ${userId}, NOW() + INTERVAL '30 days')`;
+  await db.from('sessions').insert({
+    token_hash: tokenHash,
+    user_id: userId,
+    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
 }
 
-export async function getCurrentUser() {
+export async function getCurrentUser(): Promise<SafeUser | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
+
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const [user] = await getSql() `
-    SELECT u.id, u.full_name, u.email, u.phone, u.role, u.status
-    FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ${tokenHash} AND s.expires_at > NOW() AND u.status = 'active'
-    LIMIT 1
-  `;
-  return user ?? null;
+
+  const { data: row } = await db
+    .from('sessions')
+    .select('user_id, expires_at, users!inner(id, full_name, email, phone, role, status)')
+    .eq('token_hash', tokenHash)
+    .gt('expires_at', new Date().toISOString())
+    .maybeSingle();
+
+  if (!row || !row.users) return null;
+
+  const u = row.users;
+  if (u.status !== 'active') return null;
+
+  return {
+    id: u.id,
+    full_name: u.full_name,
+    email: u.email,
+    phone: u.phone,
+    role: u.role as 'user' | 'admin',
+    status: u.status as 'active' | 'suspended',
+  };
 }
 
 export async function clearSession() {
@@ -67,7 +112,17 @@ export async function clearSession() {
   const token = cookieStore.get(COOKIE)?.value;
   if (token) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    await getSql() `DELETE FROM sessions WHERE token_hash = ${tokenHash}`;
+    await db.from('sessions').delete().eq('token_hash', tokenHash);
   }
   cookieStore.delete(COOKIE);
+}
+
+export async function getUserById(userId: string): Promise<SafeUser | null> {
+  const { data: user } = await db
+    .from('users')
+    .select('id, full_name, email, phone, role, status')
+    .eq('id', userId)
+    .maybeSingle();
+
+  return user as SafeUser | null;
 }
